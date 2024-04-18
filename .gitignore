@@ -1,0 +1,11 @@
+.idea
+.DS_Store
+__pycache__*
+*.eps
+*.png
+log/*
+trained_models/*.pt
+figures/temp/*
+data/corridor/*.pkl
+data/corridor_wp/*.pkl
+figures/*.pdf
