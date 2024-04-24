@@ -14,24 +14,30 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # ------ IMPORTANT ------
 plot_zero_c = False
 plot_c = True
-plot_gif = True
+plot_gif = False
 
 time_plot = [16, 26, 100]
 
-# prefix = ''
-# mass = 1.0
-# model_mismatch = False
-# rectangle = False
+prefix = ''
+mass = 1.0
+model_mismatch = False
+rectangle = False
 
 # prefix = ''
 # mass = 1.05
 # model_mismatch = True
 # rectangle = False
 
-prefix = '_barrier1'  # RS = 0
-mass = 1.0
-model_mismatch = False
-rectangle = True
+
+# prefix = '_barrier1'  # RS = 0
+# mass = 1.0
+# model_mismatch = False
+# rectangle = True
+
+# prefix = '_train75'
+# mass = 1.0
+# model_mismatch = False
+# rectangle = False
 
 sys_model = 'corridor'
 
@@ -40,7 +46,7 @@ t_end = 100
 std_ini = 0.5
 n_agents = 2
 n_train = 100
-random_seed = 0
+random_seed = 3
 use_sp = False
 
 t_ext = t_end * 4
@@ -187,6 +193,7 @@ if plot_c:
             ax.add_patch(rect)
         ax.set_xlim([-3.05, 3.05])
         ax.set_ylim([-3.05, 4.05])
+        # plt.text(0., 4., r'75\% trained controller', dict(size=25), ha='center', va='top')
         plt.text(0., 4., r'Trained controller', dict(size=25), ha='center', va='top')
         plt.text(2.9, -2.9, r'$\tau = %d$' % tp, dict(size=25), ha='right')
         # save figure

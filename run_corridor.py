@@ -32,9 +32,10 @@ n_traj = 1
 std_ini = 0.5
 l,n_xi = 8,8
 
-learning_rate = 1e-4
+learning_rate = 1e-4  # *0.5
 
-alpha_barrier = 5
+alpha_barrier = 0
+# alpha_barrier = 5  # 250
 alpha_side = 500
 std_ini_param = 0.005
 use_sp = False
@@ -84,8 +85,7 @@ logger = WrapLogger(logger)
 
 # # # # # # # # Define models # # # # # # # #
 sys = SystemRobots(xbar, linear)
-sys_big_m = SystemRobots(xbar, linear, mass=1.2)  # Here we do model mismatch
-ctl = Controller(sys_big_m.f, sys.n, sys.m, n_xi, l, use_sp=use_sp, t_end_sp=t_end, std_ini_param=std_ini_param)
+ctl = Controller(sys.f, sys.n, sys.m, n_xi, l, use_sp=use_sp, t_end_sp=t_end, std_ini_param=std_ini_param)
 
 # # # # # # # # Define optimizer and parameters # # # # # # # #
 optimizer = torch.optim.Adam(ctl.parameters(), lr=learning_rate)
@@ -135,8 +135,8 @@ for epoch in range(epochs):
             if alpha_obst != 0:
                 loss_obst = loss_obst + alpha_obst * f_loss_obst(x, sys) / n_traj
             if with_barrier and t>0:
-                loss_barrier = loss_barrier + alpha_barrier * f_loss_barrier_up(x,x_prev)
-    loss = loss_x + loss_u + loss_ca + loss_obst + loss_side
+                loss_barrier = loss_barrier + alpha_barrier * f_loss_barrier_up(x,x_prev) / n_traj
+    loss = loss_x + loss_u + loss_ca + loss_obst + loss_side + loss_barrier
     msg = "Epoch: {:>4d} --- Loss: {:>9.4f} ---||--- Loss x: {:>9.2f}".format(epoch, loss/t_end, loss_x)
     msg += " --- Loss u: {:>9.4f} --- Loss ca: {:>9.2f} --- Loss obst: {:>9.2f}".format(loss_u,loss_ca,loss_obst)
     msg += " --- Loss side: {:>9.2f}--- Loss barrier: {:>9.2f}".format(loss_side, loss_barrier)
@@ -146,7 +146,7 @@ for epoch in range(epochs):
     # record state dict if best on valid
     if validation and epoch % validation_period == 0 and epoch > 0:
         with torch.no_grad():
-            loss_x, loss_u, loss_ca, loss_obst, loss_side = 0, 0, 0, 0, 0
+            loss_x, loss_u, loss_ca, loss_obst, loss_side, loss_barrier = 0, 0, 0, 0, 0, 0
             for kk in range(n_validation):
                 w_in = torch.zeros(t_end, sys.n)
                 w_in[0, :] = (x0.detach() - sys.xbar) + validation_x0[kk]
@@ -155,6 +155,7 @@ for epoch in range(epochs):
                 xi = torch.zeros(ctl.psi_u.n_xi)
                 omega = (x, u)
                 for t in range(t_end):
+                    x_prev = x
                     x, _ = sys(t, x, u, w_in[t, :])
                     u, xi, omega = ctl(t, x, xi, omega)
                     loss_x = loss_x + f_loss_states(t, x, sys, Q) / n_validation
@@ -163,7 +164,9 @@ for epoch in range(epochs):
                     loss_side = loss_side + alpha_side * f_loss_side(x) / n_validation
                     if alpha_obst != 0:
                         loss_obst = loss_obst + alpha_obst * f_loss_obst(x, sys) / n_validation
-            loss = loss_x + loss_u + loss_ca + loss_obst + loss_side
+                    if with_barrier and t > 0:
+                        loss_barrier = loss_barrier + alpha_barrier * f_loss_barrier_up(x, x_prev) / n_validation
+            loss = loss_x + loss_u + loss_ca + loss_obst + loss_side + loss_barrier
         msg += ' ---||--- Original validation loss: %.2f' % (loss / t_end)
         # compare with the best valid loss
         if loss < best_valid_loss:

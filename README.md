@@ -30,8 +30,8 @@ The initial conditions used as training data are marked with &#9675;, consisting
 The shown trajectories start from a random initial position sampled from the test data and marked with &#9675;.
 
 <p align="center">
-<img src="./gif/ol.gif" alt="robot_trajectories_before_training" width="400"/>
-<img src="./gif/cl.gif" alt="robot_trajectories_after_training" width="400"/>
+<img src="./gif/olNominal.gif" alt="robot_trajectories_before_training" width="400"/>
+<img src="./gif/clNominal.gif" alt="robot_trajectories_after_training" width="400"/>
 </p> 
 
 #### Robustness verification
