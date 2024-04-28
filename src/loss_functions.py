@@ -77,7 +77,8 @@ def f_loss_barrier_up(x, x_prev):
     qy_prev = x_prev[1::4]
     gamma = 0.5
     alpha = 1  # useless?
-    h = alpha*(2.05-qy)
-    h_prev = alpha * (2.05 - qy_prev)
+    barrier_border = 2.1
+    h = alpha * (barrier_border - qy)
+    h_prev = alpha * (barrier_border - qy_prev)
     barrier_up = torch.relu((1-gamma)*h_prev - h).sum()
     return barrier_up

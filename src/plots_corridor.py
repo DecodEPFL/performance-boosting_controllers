@@ -29,7 +29,7 @@ rectangle = False
 # rectangle = False
 
 
-# prefix = '_barrier1'  # RS = 0
+# prefix = '_barrier4'  # RS = 0
 # mass = 1.0
 # model_mismatch = False
 # rectangle = True
@@ -135,7 +135,7 @@ if plot_zero_c:
     plt.tight_layout()
     ax = plt.gca()
     if rectangle:
-        rect = Rectangle((-4,2.05),8,3,linewidth=0,fill=True, facecolor='tab:gray', alpha=0.5)
+        rect = Rectangle((-4,2.6),8,3,linewidth=0,fill=True, facecolor='tab:gray', alpha=0.5)
         ax.add_patch(rect)
     ax.set_xlim([-3.05, 3.05])
     ax.set_ylim([-3.05, 4.05])
@@ -150,6 +150,36 @@ if plot_zero_c:
     filename_figure = os.path.join(BASE_DIR, 'figures', f_figure)
     plt.savefig(filename_figure, format='pdf')
     plt.close()
+
+if plot_c:
+    # Count how much time it was above barrier_border=2.
+    violations_time = 0
+    violations_traj = 0
+    n_test_traj = 100
+    for x_0 in test_x0[:n_test_traj]:
+        x_log = torch.zeros(t_end, sys.n)
+        w_in = torch.zeros(t_end, sys.n)
+        w_in[0, :] = (x0.detach() - sys.xbar) + x_0
+        u = torch.zeros(sys.m)
+        x = sys.xbar
+        xi = torch.zeros(ctl.psi_u.n_xi)
+        omega = (x, u)
+        for t in range(t_end):
+            x, _ = sys(t, x, u, w_in[t, :])
+            u, xi, omega = ctl(t, x, xi, omega)
+            x_log[t, :] = x.detach()
+        barrier_border = 2.1
+        mask = torch.zeros_like(x_log)
+        mask[:, 1] = 1
+        mask[:, 5] = 1
+        aux = ((x_log * mask) > barrier_border).sum(dim=1)
+        violations_time += torch.count_nonzero(aux)
+        if aux.sum() != 0:
+            violations_traj += 1
+    violations_time = violations_time / (n_test_traj * t_end)
+    violations_traj = violations_traj / n_test_traj
+    print("There were violations of the barrier in %.2f percent of the time" % (violations_time * 100))
+    print("There were violations of the barrier in %.2f percent of the trajectories" % (violations_traj * 100))
 
 # Simulate trajectories for the NN controller
 if plot_c:
@@ -196,6 +226,8 @@ if plot_c:
         # plt.text(0., 4., r'75\% trained controller', dict(size=25), ha='center', va='top')
         plt.text(0., 4., r'Trained controller', dict(size=25), ha='center', va='top')
         plt.text(2.9, -2.9, r'$\tau = %d$' % tp, dict(size=25), ha='right')
+        text = r'$(c)$'
+        plt.text(0., -2.9, text, dict(size=25), ha='center')
         # save figure
         f_figure = 'c_CL' + prefix
         if model_mismatch:
