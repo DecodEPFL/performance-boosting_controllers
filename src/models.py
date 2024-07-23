@@ -167,6 +167,11 @@ class SystemRobots(nn.Module):
         A2 = torch.kron(torch.eye(self.n_agents), A2)
         self.A = A1 + self.h * A2
 
+        self.mask_nl = torch.cat([torch.zeros(2), torch.ones(2)]).repeat(self.n_agents)
+
+        self.radius = 0.5
+        self.radius_obstacle = 1.4
+
     def f(self, t, x, u):
         mask = torch.cat([torch.zeros(2), torch.ones(2)]).repeat(self.n_agents)
         f = (F.linear(x - self.xbar, self.A) + self.h * self.b2/self.m * mask * torch.tanh(x - self.xbar)
@@ -177,3 +182,115 @@ class SystemRobots(nn.Module):
         x_ = self.f(t, x, u) + w  # here we can add noise not modelled
         y = x_
         return x_, y
+
+    def distance_agents(self, x, squared=False):
+        min_sec_dist = 2*self.radius + 0.2
+        # collision avoidance:
+        deltaqx = x[0::4].repeat(self.n_agents, 1) - x[0::4].repeat(self.n_agents, 1).transpose(0, 1)
+        deltaqy = x[1::4].repeat(self.n_agents, 1) - x[1::4].repeat(self.n_agents, 1).transpose(0, 1)
+        distance_sq = deltaqx ** 2 + deltaqy ** 2
+        if squared:
+            return distance_sq
+        else:
+            return torch.sqrt(distance_sq)
+
+    def distance_obstacle(self, x, squared=False):
+        r = self.radius_obstacle
+        pos_obstacle = torch.tensor([2.,0])
+        # collision avoidance:
+        deltaqx = x[0::4].repeat(self.n_agents, 1) - x[0::4].repeat(self.n_agents, 1).transpose(0, 1)
+        deltaqy = x[1::4].repeat(self.n_agents, 1) - x[1::4].repeat(self.n_agents, 1).transpose(0, 1)
+        distance_sq = deltaqx ** 2 + deltaqy ** 2
+        if squared:
+            return distance_sq
+        else:
+            return torch.sqrt(distance_sq)
+
+    def h_barrier(self, t, x, u, w):
+        distance_agents = self.distance_agents(x)
+
+    def h_agents(self, t, x, u, w):
+        assert x.shape[0] == 8
+        return (x[0] - x[4])**2 + (x[1] - x[5])**2 - (2*self.radius)**2
+
+    def h_obstacles(self, t, x, u, w):
+        assert x.shape[0] == 8
+        agent1_obs1 = (x[0] - 2)**2 + (x[1])**2 - (2*self.radius_obstacle)**2
+        agent2_obs1 = (x[4] - 2)**2 + (x[5])**2 - (2*self.radius_obstacle)**2
+        agent1_obs2 = (x[0] - (-2))**2 + (x[1])**2 - (2*self.radius_obstacle)**2
+        agent2_obs2 = (x[4] - (-2))**2 + (x[5])**2 - (2*self.radius_obstacle)**2
+        return agent1_obs1 + agent2_obs1 + agent1_obs2 + agent2_obs2
+
+
+# Controller class for comparing our approach with just training a general RNN controller: u=RNN(x)
+class ControllerRNN(nn.Module):
+    def __init__(self, f, n, m, n_xi, l, use_sp=False, t_end_sp=None, std_ini_param=None, aug=False, stab=True):
+        super().__init__()
+        self.n = n
+        self.m = m
+        self.psi_u = PsiU_nonstab(self.n, self.m, n_xi, l, std_ini_param=std_ini_param)
+        self.aug = False
+        self.output_amplification = 20*(1e-1)
+        self.use_sp = False
+
+    def forward(self, t, y_, xi, omega):
+        u_, xi_ = self.psi_u(t, y_, xi)
+        u_ = u_ * self.output_amplification
+        omega_ = (y_, u_)
+        return u_, xi_, omega_
+
+
+class PsiU_nonstab(nn.Module):
+    def __init__(self, n, m, n_xi, l, std_ini_param=None):
+        super().__init__()
+        self.n = n
+        self.n_xi = n_xi
+        self.l = l
+        self.m = m
+        n_in = n
+        self.n_in = n
+        if std_ini_param is None:
+            std_ini_param = 0.1
+        # # # # # # # # # Training parameters # # # # # # # # #
+        # Auxiliary matrices:
+        std = std_ini_param
+        # NN state dynamics:
+        self.B2 = nn.Parameter((torch.randn(n_xi, n_in)*std))
+        # NN output:
+        self.C2 = nn.Parameter((torch.randn(m, n_xi)*std))
+        self.D21 = nn.Parameter((torch.randn(m, l)*std))
+        self.D22 = nn.Parameter((torch.randn(m, n_in)*std))
+        # v signal:
+        self.D12 = nn.Parameter((torch.randn(l, n_in)*std))
+        # bias:
+        self.bxi = nn.Parameter(torch.zeros(n_xi))
+        self.bv = nn.Parameter(torch.zeros(l))
+        self.bu = nn.Parameter(torch.zeros(m))
+        # # # # # # # # # Non-trainable parameters # # # # # # # # #
+        # Auxiliary elements
+        self.epsilon = 0.001
+        self.F = nn.Parameter((torch.randn(n_xi, n_xi)*std))
+        self.B1 = nn.Parameter((torch.randn(n_xi, l)*std))
+        self.halfE = nn.Parameter((torch.eye(n_xi)))
+        self.Lambda = nn.Parameter(torch.ones(l))
+        self.C1 = nn.Parameter((torch.randn(l, n_xi)*std))
+        self.D11 = nn.Parameter(torch.randn(l, l)*std)
+
+    def forward(self, t, w, xi):
+        vec = torch.zeros(self.l)
+        vec[0] = 1
+        epsilon = torch.zeros(self.l)
+        v = F.linear(xi, self.C1[0,:]) + F.linear(w, self.D12[0,:])  # + self.bv[0]
+        epsilon = epsilon + vec * torch.tanh(v/self.Lambda[0])
+        for i in range(1, self.l):
+            vec = torch.zeros(self.l)
+            vec[i] = 1
+            v = F.linear(xi, self.C1[i,:]) + F.linear(epsilon, self.D11[i,:]) + F.linear(w, self.D12[i,:]) + self.bv[i]
+            epsilon = epsilon + vec * torch.tanh(v/self.Lambda[i])
+        E_xi_ = F.linear(xi, self.F) + F.linear(epsilon, self.B1) + F.linear(w, self.B2) + self.bxi
+        xi_ = F.linear(E_xi_, (torch.matmul(self.halfE,self.halfE.T) + self.epsilon * torch.eye(self.n_xi)).inverse())
+        u = F.linear(xi, self.C2) + F.linear(epsilon, self.D21) + F.linear(w, self.D22) + self.bu
+        return 20*u, xi_
+
+    def set_model_param(self):
+        pass

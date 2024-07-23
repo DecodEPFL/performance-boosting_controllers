@@ -4,12 +4,17 @@ import os
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 
-from src.utils import set_params
-from src.models import SystemRobots, Controller
-from src.plots import plot_trajectories
+from src.utils import set_params, count_parameters
+from src.models import SystemRobots, ControllerRNN
+from src.plots import plot_trajectories, plot_traj_vs_time
+from src.loss_functions import f_loss_states, f_loss_u, f_loss_ca, f_loss_obst, f_loss_side, f_loss_barrier_up
 
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+rectangle = False
+mass = 1.0
+model_mismatch = False
 
 # ------ IMPORTANT ------
 plot_zero_c = False
@@ -17,35 +22,15 @@ plot_c = True
 plot_gif = False
 calculate_loss = True
 
-time_plot = [16, 26, 100]
+prefix = '_RNNnonstab'
 
-prefix = ''
-mass = 1.0
-model_mismatch = False
-rectangle = False
-
-# prefix = ''
-# mass = 1.05
-# model_mismatch = True
-# rectangle = False
-
-
-# prefix = '_barrier4'  # RS = 0
-# mass = 1.0
-# model_mismatch = False
-# rectangle = True
-
-# prefix = '_train75'
-# mass = 1.0
-# model_mismatch = False
-# rectangle = False
+# ------------------------
 
 sys_model = 'corridor'
 
 is_linear = False
 t_end = 100
 std_ini = 0.5
-n_agents = 2
 n_train = 100
 random_seed = 3
 use_sp = False
@@ -57,7 +42,7 @@ exp_name = sys_model + prefix
 f_name = exp_name + '_T' + str(t_end) + '_stdini' + str(std_ini) + '_RS' + str(random_seed) +'.pt'
 params = set_params(sys_model)
 min_dist, t_end, n_agents, x0, xbar, _, _, _, Q, alpha_u, alpha_ca, alpha_obst, n_xi, l, _, _ = params
-n_xi, l = 8,8
+n_xi, l = 10, 11
 
 # ------------ 0. Load ------------
 # load data
@@ -91,17 +76,14 @@ train_points = train_x0 + x0.detach().repeat(n_train,1)
 # ------------ 2. Models ------------
 sys = SystemRobots(xbar, is_linear)
 if plot_c or calculate_loss:
-    if model_mismatch:
-        sys_big_m = SystemRobots(xbar, is_linear, mass=mass)  # Here we do model mismatch
-        ctl = Controller(sys_big_m.f, sys.n, sys.m, n_xi, l, use_sp=use_sp, t_end_sp=t_end)
-    else:
-        ctl = Controller(sys.f, sys.n, sys.m, n_xi, l, use_sp=use_sp, t_end_sp=t_end)
+    ctl = ControllerRNN(sys.f, sys.n, sys.m, n_xi, l, use_sp=use_sp, t_end_sp=t_end, std_ini_param=0.1, stab=False)
     ctl.psi_u.load_state_dict(model_data['psi_u'])
     ctl.psi_u.eval()
     if use_sp:
         ctl.sp.load_state_dict(model_data['sp'])
         ctl.sp.eval()
     ctl.psi_u.set_model_param()
+    print("The model has %i parameters" % count_parameters(ctl))
 
 # ------------ 3. Plots ------------
 plt.rcParams['text.usetex'] = True
@@ -135,9 +117,6 @@ if plot_zero_c:
     plt.axis('equal')
     plt.tight_layout()
     ax = plt.gca()
-    if rectangle:
-        rect = Rectangle((-4,2.6),8,3,linewidth=0,fill=True, facecolor='tab:gray', alpha=0.5)
-        ax.add_patch(rect)
     ax.set_xlim([-3.05, 3.05])
     ax.set_ylim([-3.05, 4.05])
     plt.text(0., 4., r'Pre-stabilized system', dict(size=25), ha='center', va='top')
@@ -152,40 +131,11 @@ if plot_zero_c:
     plt.savefig(filename_figure, format='pdf')
     plt.close()
 
-if plot_c:
-    # Count how much time it was above barrier_border=2.
-    violations_time = 0
-    violations_traj = 0
-    n_test_traj = 100
-    for x_0 in test_x0[:n_test_traj]:
-        x_log = torch.zeros(t_end, sys.n)
-        w_in = torch.zeros(t_end, sys.n)
-        w_in[0, :] = (x0.detach() - sys.xbar) + x_0
-        u = torch.zeros(sys.m)
-        x = sys.xbar
-        xi = torch.zeros(ctl.psi_u.n_xi)
-        omega = (x, u)
-        for t in range(t_end):
-            x, _ = sys(t, x, u, w_in[t, :])
-            u, xi, omega = ctl(t, x, xi, omega)
-            x_log[t, :] = x.detach()
-        barrier_border = 2.1
-        mask = torch.zeros_like(x_log)
-        mask[:, 1] = 1
-        mask[:, 5] = 1
-        aux = ((x_log * mask) > barrier_border).sum(dim=1)
-        violations_time += torch.count_nonzero(aux)
-        if aux.sum() != 0:
-            violations_traj += 1
-    violations_time = violations_time / (n_test_traj * t_end)
-    violations_traj = violations_traj / n_test_traj
-    print("There were violations of the barrier in %.2f percent of the time" % (violations_time * 100))
-    print("There were violations of the barrier in %.2f percent of the trajectories" % (violations_traj * 100))
-
 # Simulate trajectories for the NN controller
 if plot_c:
     print("Generating plot for trained controller...")
     x_log1, x_log2, x_log3 = torch.zeros(t_ext, sys.n), torch.zeros(t_ext, sys.n), torch.zeros(t_ext, sys.n)
+    u_log1 = torch.zeros(t_ext, sys.m)
     w_in1, w_in2, w_in3 = torch.zeros(t_ext, sys.n), torch.zeros(t_ext, sys.n), torch.zeros(t_ext, sys.n)
     w_in1[0, :] = (x0.detach() - sys.xbar) + test_x0[4]
     w_in2[0, :] = (x0.detach() - sys.xbar) + test_x0[5]
@@ -202,11 +152,11 @@ if plot_c:
         u_2, xi_2, omega_2 = ctl(t, x_2, xi_2, omega_2)
         u_3, xi_3, omega_3 = ctl(t, x_3, xi_3, omega_3)
         x_log1[t, :], x_log2[t, :], x_log3[t, :] = x_1.detach(), x_2.detach(), x_3.detach()
-    for idx,tp in enumerate(time_plot):
+        u_log1[t, :] = u_1.detach()
+    for idx,x in enumerate([x_log1,x_log2,x_log3]):
+        tp = 99
         # plot trajectories
-        plot_trajectories(x_log1, xbar, sys.n_agents, text="", obst=1, circles=False, axis=False, T=0)
-        plot_trajectories(x_log2, xbar, sys.n_agents, text="", obst=False, circles=False, axis=False, T=0)
-        plot_trajectories(x_log3, xbar, sys.n_agents, text="", obst=False, circles=True, axis=True, T=tp)
+        plot_trajectories(x, xbar, sys.n_agents, text="", obst=1, circles=True, axis=True, T=tp)
         # plot points of initial conditions
         plt.plot(train_points[:, 0], train_points[:, 1], 'o', color='tab:blue', alpha=0.1)
         plt.plot(train_points[:, 4], train_points[:, 5], 'o', color='tab:orange', alpha=0.1)
@@ -225,104 +175,23 @@ if plot_c:
         ax.set_xlim([-3.05, 3.05])
         ax.set_ylim([-3.05, 4.05])
         # plt.text(0., 4., r'75\% trained controller', dict(size=25), ha='center', va='top')
-        plt.text(0., 4., r'Trained controller', dict(size=25), ha='center', va='top')
+        # plt.text(0., 4., r'Trained controller', dict(size=25), ha='center', va='top')
         plt.text(2.9, -2.9, r'$\tau = %d$' % tp, dict(size=25), ha='right')
-        text = r'$(c)$'
-        plt.text(0., -2.9, text, dict(size=25), ha='center')
+        # text = r'$(c)$'
+        # plt.text(0., -2.9, text, dict(size=25), ha='center')
         # save figure
         f_figure = 'c_CL' + prefix
         if model_mismatch:
             f_figure += '_mass' + str(mass)
         f_figure += '_T' + str(t_end) + '_S' + str(n_train) + '_stdini' + str(std_ini) + '_RS' + str(random_seed)
-        f_figure += 'tp' + str(tp) + '.pdf'
+        f_figure += 'tp' + str(tp) + 'idx' + str(idx) + '.pdf'
         filename_figure = os.path.join(BASE_DIR, 'figures', f_figure)
         plt.savefig(filename_figure, format='pdf')
         plt.close()
 
-# ------------ 5. GIFs ------------
+    fig2 = plot_traj_vs_time(t_ext, n_agents, x_log1, u_log1)
 
-# Base controller
-if plot_zero_c and plot_gif:
-    for idx, x in enumerate([x_zero1,x_zero2,x_zero3]):
-        print("Generating figures for OL trajectory %d..." % (idx+1))
-        for tp in range(1, t_end):
-            ob_print = True
-            if idx > 0:
-                plot_trajectories(x_zero1, xbar, sys.n_agents, text="", obst=ob_print, circles=False, T=1)
-                ob_print = False
-            if idx == 2:
-                plot_trajectories(x_zero2, xbar, sys.n_agents, text="", circles=False, T=1)
-            plot_trajectories(x, xbar, sys.n_agents, text="", obst=ob_print, circles=True, T=tp)
-            # plot points of initial conditions
-            # plt.plot(train_points[:, 0], train_points[:, 1], 'o', color='tab:blue', alpha=0.1)
-            # plt.plot(train_points[:, 4], train_points[:, 5], 'o', color='tab:orange', alpha=0.1)
-            # adjust the figure
-            fig = plt.gcf()
-            fig.set_size_inches(6, 7)
-            plt.axis('equal')
-            plt.tight_layout()
-            ax = plt.gca()
-            ax.set_xlim([-3.05, 3.05])
-            ax.set_ylim([-3.05, 4.05])
-            plt.text(0., 4., r'Pre-stabilized system', dict(size=25), ha='center', va='top')
-            plt.text(1.85, -2.9, r'$\tau = %02d$' % tp, dict(size=25), ha='left')
-            f_gif = "ol-%03i" % (tp + 100*idx) + ".png"
-            filename_gif = os.path.join(BASE_DIR, 'gif', f_gif)
-            plt.savefig(filename_gif)
-            plt.close(fig)
-    print("Generating OL gif...")
-    filename_figs = os.path.join(BASE_DIR, 'gif', "ol-*.png")
-    filename_gif = os.path.join(BASE_DIR, 'gif', "ol.gif")
-    command = "convert -delay 4 -loop 0 " + filename_figs + " " + filename_gif
-    os.system(command)
-    print("Gif saved at %s" % filename_gif)
-    print("Deleting figures...")
-    command = "rm " + filename_figs
-    os.system(command)
-
-# Empirical controller
-if plot_c and plot_gif:
-    for idx, x in enumerate([x_log1,x_log2,x_log3]):
-        print("Generating figures for emp trajectory %d..." % (idx+1))
-        for tp in range(1, t_end):
-            ob_print = True
-            if idx > 0:
-                plot_trajectories(x_log1, xbar, sys.n_agents, text="", obst=ob_print, circles=False, T=1)
-                ob_print = False
-            if idx == 2:
-                plot_trajectories(x_log2, xbar, sys.n_agents, text="", circles=False, T=1)
-            plot_trajectories(x, xbar, sys.n_agents, text="", obst=ob_print, circles=True, T=tp)
-            # plot points of initial conditions
-            plt.plot(train_points[:, 0], train_points[:, 1], 'o', color='tab:blue', alpha=0.1)
-            plt.plot(train_points[:, 4], train_points[:, 5], 'o', color='tab:orange', alpha=0.1)
-            # adjust the figure
-            fig = plt.gcf()
-            fig.set_size_inches(6, 7)
-            plt.axis('equal')
-            plt.tight_layout()
-            ax = plt.gca()
-            if rectangle:
-                rect = Rectangle((-4, 2.55), 8, 3, linewidth=0, fill=True, facecolor=(0.5, 0.5, 0.5, 0.2))
-                ax.add_patch(rect)
-            ax.set_xlim([-3.05, 3.05])
-            ax.set_ylim([-3.05, 4.05])
-            plt.text(0., 4., r'Trained controller', dict(size=25), ha='center', va='top')
-            plt.text(1.85, -2.9, r'$\tau = %02d$' % tp, dict(size=25), ha='left')
-            f_gif = "cl" + prefix + "-%03i" % (tp + 100*idx) + ".png"
-            filename_gif = os.path.join(BASE_DIR, 'gif', f_gif)
-            plt.savefig(filename_gif)
-            plt.close(fig)
-    print("Generating cl gif...")
-    filename_figs = os.path.join(BASE_DIR, 'gif', "cl" + prefix + "-*.png")
-    filename_gif = os.path.join(BASE_DIR, 'gif', "cl" + prefix + ".gif")
-    command = "convert -delay 4 -loop 0 " + filename_figs + " " + filename_gif
-    os.system(command)
-    print("Gif saved at %s" % filename_gif)
-    print("Deleting figures...")
-    command = "rm " + filename_figs
-    os.system(command)
-
-# ------------ 6. Cost ------------
+# ------------ 5. Cost ------------
 if calculate_loss:
     test_x0_iter = test_x0[100:120, :]
     loss_x, loss_u, loss_ca, loss_obst = 0, 0, 0, 0
@@ -355,5 +224,5 @@ if calculate_loss:
     loss_uRu = loss_u / test_x0_iter.shape[0]
     print('Original loss: %.2f' % (loss / t_end))
     print('xQx loss: %.2f' % (loss_xQx / t_end))
-    print('uRu loss: %.2f' % (loss_uRu / t_end))
+    print('uRu loss: %.4f' % (loss_uRu / t_end))
     print('\tLoss x: %.2f --- Loss u: %.2f --- Loss ca: %.2f --- Loss obst: %.2f' % (loss_x,loss_u,loss_ca,loss_obst))

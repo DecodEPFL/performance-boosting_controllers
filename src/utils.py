@@ -178,3 +178,7 @@ def generate_data(sys_model, t_end, n_agents, random_seed, std_ini=None, std_dis
     pickle.dump(data, filehandler)
     filehandler.close()
     print("Data saved at %s" % filename)
+
+
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
