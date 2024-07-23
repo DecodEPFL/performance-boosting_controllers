@@ -8,4 +8,5 @@ trained_models/*.pt
 figures/temp/*
 data/corridor/*.pkl
 data/corridor_wp/*.pkl
+data/corridor_online_opt/*.pkl
 figures/*.pdf
