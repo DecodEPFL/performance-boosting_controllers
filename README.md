@@ -25,7 +25,7 @@ case they have to visit different goals in a predefined order.
 The following gifs show the trajectories of the 2 robots before training (left), and after the training 
 of the performance-boosting controller (right). 
 The agents need to coordinate in order to pass through a narrow passage while avoiding collisions between them and 
-the obsacles. 
+the obstacles. 
 The initial conditions used as training data are marked with &#9675;, consisting of s = 100 samples.
 The shown trajectories start from a random initial position sampled from the test data and marked with &#9675;.
 
@@ -81,5 +81,5 @@ This work is licensed under a
 
 
 ## References
-[[1]](...) Luca Furieri, Clara Galimberti, Giancarlo Ferrari-Trecate.
+[[1]](https://arxiv.org/pdf/2405.00871) Luca Furieri, Clara Galimberti, Giancarlo Ferrari Trecate.
 "Learning to boost the performance of stable nonlinear closed-loop systems," 2024.
